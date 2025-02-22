@@ -245,6 +245,159 @@ impl Device {
         AttrIterator { dev: self, idx: 0 }
     }
 
+    // ----- Debug Attributes -----
+
+    /// Determines if the device has any debug attributes
+    pub fn has_debug_attrs(&self) -> bool {
+        unsafe { ffi::iio_device_get_debug_attrs_count(self.dev) > 0 }
+    }
+
+    /// Gets the number of device-specific debug attributes
+    pub fn num_debug_attrs(&self) -> usize {
+        unsafe { ffi::iio_device_get_debug_attrs_count(self.dev) as usize }
+    }
+
+    /// Gets the name of the device-specific debug attribute at the index
+    pub fn get_debug_attr(&self, idx: usize) -> Result<String> {
+        let pstr = unsafe { ffi::iio_device_get_debug_attr(self.dev, idx as c_uint) };
+        cstring_opt(pstr).ok_or(Error::InvalidIndex)
+    }
+
+    /// Try to find a device-specific debug attribute by its name
+    pub fn find_debug_attr(&self, name: &str) -> Option<String> {
+        let cname = cstring_or_bail!(name);
+        let pstr = unsafe { ffi::iio_device_find_debug_attr(self.dev, cname.as_ptr()) };
+        cstring_opt(pstr)
+    }
+
+    /// Determines if a buffer-specific debug attribute exists
+    pub fn has_debug_attr(&self, name: &str) -> bool {
+        let cname = cstring_or_bail_false!(name);
+        let pstr = unsafe { ffi::iio_device_find_debug_attr(self.dev, cname.as_ptr()) };
+        !pstr.is_null()
+    }
+
+    /// Reads a device-specific debug attribute
+    ///
+    /// `attr` The name of the attribute
+    pub fn debug_attr_read<T: FromAttribute>(&self, attr: &str) -> Result<T> {
+        let sval = self.attr_read_str(attr)?;
+        T::from_attr(&sval)
+    }
+
+    /// Reads a device-specific debug attribute as a string
+    ///
+    /// `attr` The name of the attribute
+    pub fn debug_attr_read_str(&self, attr: &str) -> Result<String> {
+        let mut buf = vec![0 as c_char; ATTR_BUF_SIZE];
+        let attr = CString::new(attr)?;
+        let ret = unsafe {
+            ffi::iio_device_debug_attr_read(self.dev, attr.as_ptr(), buf.as_mut_ptr(), buf.len())
+        };
+        sys_result(ret as i32, ())?;
+        let s = unsafe {
+            CStr::from_ptr(buf.as_ptr())
+                .to_str()
+                .map_err(|_| Error::StringConversionError)?
+        };
+        Ok(s.into())
+    }
+
+    /// Reads a device-specific debug attribute as a boolean
+    ///
+    /// `attr` The name of the attribute
+    pub fn debug_attr_read_bool(&self, attr: &str) -> Result<bool> {
+        let mut val: bool = false;
+        let attr = CString::new(attr)?;
+        let ret = unsafe { ffi::iio_device_debug_attr_read_bool(self.dev, attr.as_ptr(), &mut val) };
+        sys_result(ret, val)
+    }
+
+    /// Reads a device-specific debug attribute as an integer (i64)
+    ///
+    /// `attr` The name of the attribute
+    pub fn debug_attr_read_int(&self, attr: &str) -> Result<i64> {
+        let mut val: c_longlong = 0;
+        let attr = CString::new(attr)?;
+        let ret = unsafe { ffi::iio_device_debug_attr_read_longlong(self.dev, attr.as_ptr(), &mut val) };
+        sys_result(ret, val as i64)
+    }
+
+    /// Reads a device-specific debug attribute as a floating-point (f64) number
+    ///
+    /// `attr` The name of the attribute
+    pub fn debug_attr_read_float(&self, attr: &str) -> Result<f64> {
+        let mut val: f64 = 0.0;
+        let attr = CString::new(attr)?;
+        let ret = unsafe { ffi::iio_device_debug_attr_read_double(self.dev, attr.as_ptr(), &mut val) };
+        sys_result(ret, val)
+    }
+
+    /// Reads all the device-specific debug attributes.
+    /// This is especially useful when using the network backend to
+    /// retrieve all the debug attributes with a single call.
+    pub fn debug_attr_read_all(&self) -> Result<HashMap<String, String>> {
+        let mut map = HashMap::new();
+        let pmap = (&mut map as *mut HashMap<_, _>).cast();
+        let ret = unsafe { ffi::iio_device_debug_attr_read_all(self.dev, Some(attr_read_all_cb), pmap) };
+        sys_result(ret, map)
+    }
+
+    /// Writes a device-specific debug attribute
+    ///
+    /// `attr` The name of the attribute
+    /// `val` The value to write
+    pub fn debug_attr_write<T: ToAttribute>(&self, attr: &str, val: T) -> Result<()> {
+        let sval = T::to_attr(&val)?;
+        self.attr_write_str(attr, &sval)
+    }
+
+    /// Writes a device-specific debug attribute as a string
+    ///
+    /// `attr` The name of the attribute
+    /// `val` The value to write
+    pub fn debug_attr_write_str(&self, attr: &str, val: &str) -> Result<()> {
+        let attr = CString::new(attr)?;
+        let val = CString::new(val)?;
+        let ret = unsafe { ffi::iio_device_debug_attr_write(self.dev, attr.as_ptr(), val.as_ptr()) };
+        sys_result(ret as i32, ())
+    }
+
+    /// Writes a device-specific debug attribute as a boolean
+    ///
+    /// `attr` The name of the attribute
+    /// `val` The value to write
+    pub fn debug_attr_write_bool(&self, attr: &str, val: bool) -> Result<()> {
+        let attr = CString::new(attr)?;
+        let ret = unsafe { ffi::iio_device_debug_attr_write_bool(self.dev, attr.as_ptr(), val) };
+        sys_result(ret, ())
+    }
+
+    /// Writes a device-specific debug attribute as an integer (i64)
+    ///
+    /// `attr` The name of the attribute
+    /// `val` The value to write
+    pub fn debug_attr_write_int(&self, attr: &str, val: i64) -> Result<()> {
+        let attr = CString::new(attr)?;
+        let ret = unsafe { ffi::iio_device_debug_attr_write_longlong(self.dev, attr.as_ptr(), val) };
+        sys_result(ret, ())
+    }
+
+    /// Writes a device-specific debug attribute as a floating-point (f64) number
+    ///
+    /// `attr` The name of the attribute
+    /// `val` The value to write
+    pub fn debug_attr_write_float(&self, attr: &str, val: f64) -> Result<()> {
+        let attr = CString::new(attr)?;
+        let ret = unsafe { ffi::iio_device_debug_attr_write_double(self.dev, attr.as_ptr(), val) };
+        sys_result(ret, ())
+    }
+
+    /// Gets an iterator for the debug attributes in the device
+    pub fn debug_attributes(&self) -> AttrIterator {
+        AttrIterator { dev: self, idx: 0 }
+    }
+
     // ----- Channels -----
 
     /// Gets the number of channels on the device
